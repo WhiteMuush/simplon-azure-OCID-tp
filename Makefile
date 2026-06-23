@@ -21,7 +21,7 @@ restart:
 
 kill:
 	@docker stop python-app > /dev/null
-	@if docker rm python-app > /dev/null ; then \
+	@if docker rm python-app -v > /dev/null ; then \
 		echo "Python App Kill Correctly"; \
 	else \
 		echo "Error, something wrong"; \
