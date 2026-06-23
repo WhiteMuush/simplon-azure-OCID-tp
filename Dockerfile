@@ -1,10 +1,11 @@
-FROM python:3.12.3
+FROM python:3.14-slim
 
 # Create app directory
 WORKDIR /app
 
 # Install app dependencies
 COPY requirements.txt ./
+COPY pylock.toml ./
 
 RUN pip install -r requirements.txt
 
@@ -15,4 +16,4 @@ EXPOSE 8080
 
 VOLUME ["/app/data"]
 
-CMD [ "python", "app.py", "host=0.0.0.0", "port=8080" ]
+CMD [ "python", "app.py", "--host 0.0.0.0 --port 8080" ]
