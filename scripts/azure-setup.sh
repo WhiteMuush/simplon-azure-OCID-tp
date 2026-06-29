@@ -1,43 +1,31 @@
 #!/usr/bin/env bash
 #
-# Bootstrap OIDC, a lancer UNE SEULE FOIS en local (az login), par un Owner.
-#
-# C'est le SEUL morceau qui ne peut pas venir de la CI : pour que la CI se
-# connecte a Azure sans secret (OIDC), il faut qu'une identite + une confiance
-# federee existent DEJA. Or les creer demande d'etre deja authentifie => oeuf
-# et poule. Tout le reste (ACR, image, environment + Container App) est cree par
-# la CI elle-meme une fois connectee via cette identite (voir .gitlab-ci.yml).
-#
-# Ce script cree donc le minimum : resource group, providers, managed identity,
-# federated credential (GitLab main -> Azure) et les roles au scope du RG.
-# Aucun secret : la CI s'authentifie en OIDC.
+# OIDC bootstrap: run ONCE locally (az login, as an Owner).
+# Creates the minimum that CANNOT come from the CI (chicken-and-egg: connecting
+# via OIDC assumes the identity + federated trust already exist): resource
+# group, providers, managed identity, federated credential and roles (RG scope).
+# Everything else (ACR, image, environment, Container App) is created by the CI.
 
 set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Configuration lue dans .env (versionne en clair : que des identifiants, pas de secret).
+# Config in clear (identifiers only, no secret): SUBSCRIPTION, RG, LOC,
+# ACR, ENVNAME, APP, MI, GITLAB_PROJECT.
 if [ ! -f "$SCRIPT_DIR/.env" ]; then
-  echo "Erreur : $SCRIPT_DIR/.env introuvable." >&2
+  echo "Error: $SCRIPT_DIR/.env not found." >&2
   exit 1
 fi
-set -a
 # shellcheck source=/dev/null
-. "$SCRIPT_DIR/.env"
-set +a
+set -a; . "$SCRIPT_DIR/.env"; set +a
 
-# Cible explicitement le bon abonnement (independant de l'abo actif du CLI).
-select_subscription() {
-  az account set --subscription "$SUBSCRIPTION"
-}
-
-# Cree le resource group : il porte le role (scope RG) et accueillera l'infra CI.
+# Resource group: holds the roles (RG scope) and hosts the infra created by the CI.
 create_rg() {
   az group create -n "$RG" -l "$LOC"
 }
 
-# Enregistre les resource providers (abonnement neuf : aucun actif par defaut).
-# Fait ici car ca demande un droit niveau abonnement que la CI (scope RG) n'a pas.
+# Providers: a fresh subscription has none registered. Done here because it needs
+# a subscription-level right the CI (RG scope) does not have.
 register_providers() {
   local ns
   for ns in Microsoft.ContainerRegistry Microsoft.App Microsoft.OperationalInsights; do
@@ -45,12 +33,12 @@ register_providers() {
   done
 }
 
-# Identite que la CI incarnera via OIDC.
+# Managed identity the CI will impersonate via OIDC.
 create_identity() {
   az identity create -g "$RG" -n "$MI"
 }
 
-# Confiance federee OIDC : Azure fait confiance aux JWT de ce projet GitLab, branche main.
+# Federated trust: Azure accepts JWTs from this GitLab project, main branch.
 setup_oidc() {
   az identity federated-credential create \
     --name gitlab-main \
@@ -61,30 +49,27 @@ setup_oidc() {
     --audiences "api://AzureADTokenExchange"
 }
 
-# Roles de l'identite, au scope du RG (moindre privilege) :
-# - Contributor : creer/gerer ACR + Container App depuis la CI
-# - AcrPush     : pousser l'image depuis la CI (data-plane registry)
-# - AcrPull     : laisser l'app ACA tirer l'image avec son identite
-# Les roles ACR sont au scope RG donc valent pour l'ACR que la CI creera dedans.
+# RG-scoped roles (least privilege, also valid for the ACR the CI creates inside):
+# Contributor (manage ACR + ACA), AcrPush (CI push), AcrPull (pull by the ACA app).
 assign_roles() {
-  local principal scope
+  local principal scope role
   principal=$(az identity show -g "$RG" -n "$MI" --query principalId -o tsv)
   scope="/subscriptions/$SUBSCRIPTION/resourceGroups/$RG"
-  az role assignment create --assignee "$principal" --role Contributor --scope "$scope"
-  az role assignment create --assignee "$principal" --role AcrPush --scope "$scope"
-  az role assignment create --assignee "$principal" --role AcrPull --scope "$scope"
+  for role in Contributor AcrPush AcrPull; do
+    az role assignment create --assignee "$principal" --role "$role" --scope "$scope"
+  done
 }
 
-# Identifiants a reporter dans le bloc variables du .gitlab-ci.yml (pas des secrets).
+# Identifiers to copy into the variables block of .gitlab-ci.yml (not secrets).
 print_ci_vars() {
   cat <<EOF
 
 ==========================================================
- [Azure Bootstrap] Identifiants pour .gitlab-ci.yml :
+ [Azure Bootstrap] Identifiers for .gitlab-ci.yml:
 ==========================================================
 AZURE_CLIENT_ID       = $(az identity show -g "$RG" -n "$MI" --query clientId -o tsv)
 AZURE_TENANT_ID       = $(az account show --query tenantId -o tsv)
-AZURE_SUBSCRIPTION_ID = $(az account show --query id -o tsv)
+AZURE_SUBSCRIPTION_ID = $SUBSCRIPTION
 RESOURCE_GROUP        = $RG
 ACR_NAME              = $ACR
 ACA_NAME              = $APP
@@ -94,7 +79,7 @@ EOF
 }
 
 main() {
-  select_subscription
+  az account set --subscription "$SUBSCRIPTION"
   create_rg
   register_providers
   create_identity
