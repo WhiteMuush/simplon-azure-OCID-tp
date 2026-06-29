@@ -29,6 +29,9 @@ variables:
 # -----------------------------------------------------------------------------
 build-job:
   stage: build
+  # Skip on scheduled pipelines (those only run the wiki sync).
+  rules:
+    - if: '$CI_PIPELINE_SOURCE != "schedule"'
   image: docker:27.3
   services:
     - docker:27.3-dind
@@ -50,7 +53,7 @@ build-job:
 push-job:
   stage: push
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE != "schedule"'
   image: mcr.microsoft.com/azure-cli:latest
   services:
     - docker:27.3-dind
@@ -87,7 +90,7 @@ push-job:
 deploy-job:
   stage: deploy
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE != "schedule"'
   image: mcr.microsoft.com/azure-cli:latest
   id_tokens:
     AZURE_OIDC_TOKEN:
