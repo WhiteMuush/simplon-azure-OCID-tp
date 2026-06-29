@@ -1,32 +1,33 @@
-# Dockerize and deploy a Python app to Azure (Melvin PETIT)
+# Conteneuriser et déployer une application Python sur Azure (Melvin PETIT)
 
-A small Flask application, containerized with Docker and continuously deployed to
-**Azure Container Apps** by a GitLab CI pipeline. The whole Azure authentication
-is **secret-less**: the pipeline logs in to Azure with **OpenID Connect (OIDC)**,
-so no password, key or certificate is ever stored.
+Une petite application Flask, conteneurisée avec Docker et déployée en continu sur
+**Azure Container Apps** par un pipeline CI GitLab. Toute l'authentification Azure
+est **sans secret** : le pipeline se connecte à Azure avec **OpenID Connect (OIDC)**,
+donc aucun mot de passe, clé ou certificat n'est jamais stocké.
 
-## What this repo does
+## Ce que fait ce dépôt
 
-1. **The app** (`app.py`): a tiny Flask server that logs every visit and exposes
-   the log file.
-2. **Containerization** (`Dockerfile`, `Makefile`): the app runs in a Docker
-   image, with a volume for its logs.
-3. **CI/CD** (`.gitlab-ci.yml`): on every push the image is built and smoke
-   tested; on `main` it is pushed to **Azure Container Registry (ACR)** and the
-   app is deployed/updated on **Azure Container Apps (ACA)**.
-4. **OIDC bootstrap** (`scripts/`): a one-time local script creates the minimal
-   Azure trust the CI needs, then the CI provisions the rest of the infra itself.
+1. **L'application** (`app.py`) : un minuscule serveur Flask qui journalise chaque
+   visite et expose le fichier de log.
+2. **Conteneurisation** (`Dockerfile`, `Makefile`) : l'application tourne dans une
+   image Docker, avec un volume pour ses logs.
+3. **CI/CD** (`.gitlab-ci.yml`) : à chaque push l'image est construite et testée
+   (smoke test) ; sur `main` elle est poussée vers **Azure Container Registry (ACR)**
+   et l'application est déployée/mise à jour sur **Azure Container Apps (ACA)**.
+4. **Bootstrap OIDC** (`scripts/`) : un script local exécuté une seule fois crée le
+   minimum de confiance Azure dont la CI a besoin, puis la CI provisionne le reste
+   de l'infrastructure elle-même.
 
-## The application
+## L'application
 
-`app.py` is a Flask app with two routes:
+`app.py` est une application Flask avec deux routes :
 
-- `GET /` — appends a line `<ip> - [<timestamp>] - GET / HTTP/1.1` to
-  `data/access.log` and returns `Hello, world!`.
-- `GET /logs` — returns the content of `data/access.log`.
+- `GET /` , ajoute une ligne `<ip> - [<timestamp>] - GET / HTTP/1.1` à
+  `data/access.log` et renvoie `Hello, world!`.
+- `GET /logs` , renvoie le contenu de `data/access.log`.
 
-It listens on `0.0.0.0:8080` and writes its logs under `./data`, which is mounted
-as a Docker volume so the logs survive container restarts.
+Elle écoute sur `0.0.0.0:8080` et écrit ses logs dans `./data`, monté comme volume
+Docker pour que les logs survivent aux redémarrages du conteneur.
 
 ```bash
 $ python3 --version
@@ -34,40 +35,39 @@ Python 3.12.3
 $ python app.py        # http://localhost:8080
 ```
 
-## Repository layout
+## Organisation du dépôt
 
-| Path | Role |
+| Chemin | Rôle |
 |------|------|
-| `app.py` | Flask application (routes `/` and `/logs`) |
-| `requirements.txt`, `pylock.toml` | Python dependencies (Flask) |
-| `Dockerfile` | Image build (`python:3.14-slim`, port 8080, volume `/app/data`) |
-| `Makefile` | Local Docker shortcuts (`build`, `run`, `restart`, `kill`) |
-| `.gitlab-ci.yml` | CI/CD pipeline (build → push → deploy) |
-| `scripts/azure-setup.sh` | One-time OIDC bootstrap on Azure (run locally) |
-| `scripts/azure-teardown.sh` | Empties the Azure resource group |
-| `scripts/.env` | Bootstrap config (identifiers only, in clear) |
-| `data/` | Runtime logs (`access.log`) |
+| `app.py` | Application Flask (routes `/` et `/logs`) |
+| `requirements.txt`, `pylock.toml` | Dépendances Python (Flask) |
+| `Dockerfile` | Construction de l'image (`python:3.14-slim`, port 8080, volume `/app/data`) |
+| `Makefile` | Raccourcis Docker locaux (`build`, `run`, `restart`, `kill`) |
+| `.gitlab-ci.yml` | Pipeline CI/CD (build → push → deploy) |
+| `scripts/azure-setup.sh` | Bootstrap OIDC unique sur Azure (exécuté localement) |
+| `scripts/azure-teardown.sh` | Vide le groupe de ressources Azure |
+| `scripts/.env` | Configuration du bootstrap (identifiants uniquement, en clair) |
+| `data/` | Logs d'exécution (`access.log`) |
 
-## Run locally
+## Lancer en local
 
-With Docker directly:
+Avec Docker directement :
 
 ```bash
 docker build -t python-app .
 docker run -p 8080:8080 python-app:latest   # http://localhost:8080
 ```
 
-Or with the `Makefile`, which wraps the same commands and prints a clear
-success/error message (stdout is sent to `/dev/null`, errors are kept for easy
-debugging):
+Ou avec le `Makefile`, qui encapsule les mêmes commandes et affiche un message de
+succès/erreur clair (la sortie standard est envoyée vers `/dev/null`, les erreurs
+sont conservées pour faciliter le débogage) :
 
-- `make build` — build the image (`docker build`)
-- `make run` — start the app from scratch (`docker run`)
-- `make restart` — restart without data loss (`docker restart`)
-- `make kill` — stop and fully remove the container and its volume, **with** data loss
+- `make build` , construit l'image (`docker build`)
+- `make run` , démarre l'application de zéro (`docker run`)
+- `make restart` , redémarre sans perte de données (`docker restart`)
+- `make kill` , arrête et supprime complètement le conteneur et son volume, **avec** perte de données
 
-The logs are written inside the container under `/app/data`, persisted through the
-volume:
+Les logs sont écrits dans le conteneur sous `/app/data`, persistés via le volume :
 
 ```bash
 $ docker exec -it <container> sh
@@ -75,74 +75,77 @@ $ cat data/access.log
 172.17.0.1 - [2026-06-23 08:33:21] - GET / HTTP/1.1
 ```
 
-## CI/CD pipeline
+## Pipeline CI/CD
 
-The pipeline has three chained stages; each starts only if the previous one
-succeeds.
+Le pipeline a trois étapes enchaînées ; chacune ne démarre que si la précédente
+réussit.
 
-| Stage | Branch | What it does |
+| Étape | Branche | Ce qu'elle fait |
 |-------|--------|--------------|
-| `build` | all | Builds the image and runs a smoke test (start the container, then stop it). Pushes nothing. |
-| `push` | `main` only | Creates the ACR if needed, then builds and pushes the image (tagged with the commit SHA **and** `latest`). |
-| `deploy` | `main` only | Creates the ACA environment + app on first run, otherwise updates the image. Exposes the public URL as the GitLab `staging` environment. |
+| `build` | toutes | Construit l'image et lance un smoke test (démarre le conteneur, puis l'arrête). Ne pousse rien. |
+| `push` | `main` uniquement | Crée l'ACR si besoin, puis construit et pousse l'image (taguée avec le SHA du commit **et** `latest`). |
+| `deploy` | `main` uniquement | Crée l'environnement ACA + l'application au premier passage, sinon met à jour l'image. Expose l'URL publique comme environnement GitLab `staging`. |
 
-The image is versioned by the short commit ID (`$CI_COMMIT_SHORT_SHA`): one tag =
-one precise commit, so you always know what is running and can roll back to an
-immutable image if a deployment breaks.
+L'image est versionnée par l'identifiant court du commit (`$CI_COMMIT_SHORT_SHA`) :
+un tag = un commit précis, donc on sait toujours ce qui tourne et on peut revenir à
+une image immuable si un déploiement casse.
 
-`push` and `deploy` only run on `main` because the OIDC trust (see below) is
-limited to that branch.
+`push` et `deploy` ne s'exécutent que sur `main` car la confiance OIDC (voir plus
+bas) est limitée à cette branche.
 
-## Secret-less authentication: OpenID Connect (OIDC)
+## Authentification sans secret : OpenID Connect (OIDC)
 
-Company policy: **no secret** in the CI. Authentication to Azure uses OIDC only.
+Politique d'entreprise : **aucun secret** dans la CI. L'authentification à Azure
+utilise uniquement OIDC.
 
-On every pipeline, GitLab issues a short-lived **JWT** (JSON Web Token) signed by
-GitLab. The CI presents this token to Azure, which was configured beforehand to
-**trust** tokens coming from this specific GitLab project (a *federated
-credential* on a *managed identity*). Nothing is stored: there is no secret to
-steal, and an intercepted token expires almost immediately and is only valid for
-this project.
+À chaque pipeline, GitLab émet un **JWT** (JSON Web Token) à courte durée de vie,
+signé par GitLab. La CI présente ce token à Azure, configuré au préalable pour
+**faire confiance** aux tokens venant de ce projet GitLab précis (une *federated
+credential* sur une *managed identity*). Rien n'est stocké : il n'y a aucun secret
+à voler, et un token intercepté expire presque immédiatement et n'est valable que
+pour ce projet.
 
-A JWT has three parts `header.payload.signature`. The important payload claims:
+Un JWT a trois parties `header.payload.signature`. Les claims importants du payload :
 
-- `iss` (issuer) — who issued the token (GitLab).
-- `aud` (audience) — who it is for (`api://AzureADTokenExchange`).
-- `sub` (subject) — exactly where it comes from (project / branch). This is what
-  Azure checks to accept only **our** project on `main`.
-- `exp` (expiration) — short lifetime.
+- `iss` (issuer) , qui a émis le token (GitLab).
+- `aud` (audience) , à qui il est destiné (`api://AzureADTokenExchange`).
+- `sub` (subject) , d'où il provient exactement (projet / branche). C'est ce
+  qu'Azure vérifie pour n'accepter que **notre** projet sur `main`.
+- `exp` (expiration) , durée de vie courte.
 
-The Azure identifiers (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
-`AZURE_SUBSCRIPTION_ID`, resource names) are kept **in clear** in the `variables`
-block of `.gitlab-ci.yml`. These are **not secrets** — they are public
-identifiers, no authentication relies on them (the OIDC JWT is what
-authenticates). They could equally live in *Settings > CI/CD > Variables*. The
-app's public URL is not hardcoded: the CI reads it after deployment and exposes
-it as the `staging` environment (dynamic URL via a `dotenv` report).
+Les identifiants Azure (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
+`AZURE_SUBSCRIPTION_ID`, noms de ressources) sont gardés **en clair** dans le bloc
+`variables` de `.gitlab-ci.yml`. Ce ne sont **pas des secrets** , ce sont des
+identifiants publics, aucune authentification ne repose sur eux (c'est le JWT OIDC
+qui authentifie). Ils pourraient tout aussi bien se trouver dans *Settings > CI/CD >
+Variables*. L'URL publique de l'application n'est pas codée en dur : la CI la lit
+après déploiement et l'expose comme environnement `staging` (URL dynamique via un
+rapport `dotenv`).
 
-## Architecture: the CI provisions the infra, except one bootstrap
+## Architecture : la CI provisionne l'infra, sauf un bootstrap
 
-There is a chicken-and-egg problem. For the CI to connect to Azure without a
-secret, an identity and a federated trust must **already** exist on Azure — but
-creating them requires being authenticated. That irreducible minimum is the
-**only** thing that cannot come from the CI.
+Il y a un problème de l'œuf et de la poule. Pour que la CI se connecte à Azure sans
+secret, une identité et une confiance fédérée doivent **déjà** exister sur Azure ,
+mais les créer nécessite d'être authentifié. Ce minimum incompressible est la
+**seule** chose qui ne peut pas venir de la CI.
 
-So the split is:
+Le découpage est donc :
 
-- **One-time local bootstrap** (`scripts/azure-setup.sh`, run by an Owner after
-  `az login`): resource group, resource providers, managed identity, federated
-  credential (GitLab `main` → Azure) and the RG-scoped roles
-  (`Contributor` + `AcrPush` + `AcrPull`). It then prints the identifiers to copy
-  into `.gitlab-ci.yml`.
-- **Everything else is created by the CI**: ACR, image, ACA environment and app.
-  The `az ... create` commands are idempotent, so the pipeline replays safely.
+- **Bootstrap local unique** (`scripts/azure-setup.sh`, exécuté par un Owner après
+  `az login`) : groupe de ressources, resource providers, managed identity,
+  federated credential (GitLab `main` → Azure) et les rôles au périmètre du RG
+  (`Contributor` + `AcrPush` + `AcrPull`). Il affiche ensuite les identifiants à
+  copier dans `.gitlab-ci.yml`.
+- **Tout le reste est créé par la CI** : ACR, image, environnement ACA et
+  application. Les commandes `az ... create` sont idempotentes, donc le pipeline se
+  rejoue sans risque.
 
 ```bash
 az login
-./scripts/azure-setup.sh   # reads scripts/.env, run only once
+./scripts/azure-setup.sh   # lit scripts/.env, à exécuter une seule fois
 ```
 
-### OIDC flow diagram
+### Diagramme du flux OIDC
 
 ```mermaid
 sequenceDiagram
@@ -152,41 +155,41 @@ sequenceDiagram
     participant ACR as Azure Container Registry
     participant ACA as Azure Container Apps
 
-    CI->>GL: request an id_token (aud = api://AzureADTokenExchange)
-    GL-->>CI: signed JWT (claims: iss, sub, aud, exp)
+    CI->>GL: demande un id_token (aud = api://AzureADTokenExchange)
+    GL-->>CI: JWT signé (claims : iss, sub, aud, exp)
     CI->>AZ: az login --federated-token <JWT>
-    AZ->>AZ: verify GitLab signature + sub claim (project allowed?)
-    AZ-->>CI: session opened (no secret exchanged)
-    CI->>ACR: docker build + push (image:SHA) via OIDC ACR token
+    AZ->>AZ: vérifie la signature GitLab + le claim sub (projet autorisé ?)
+    AZ-->>CI: session ouverte (aucun secret échangé)
+    CI->>ACR: docker build + push (image:SHA) via token ACR OIDC
     CI->>ACA: az containerapp create/update --image ...:SHA
-    ACA-->>CI: new revision deployed (staging)
+    ACA-->>CI: nouvelle révision déployée (staging)
 ```
 
-Text version, in case Mermaid does not render:
+Version texte, au cas où Mermaid ne s'affiche pas :
 
 ```
-GitLab CI ── request a token ──▶ GitLab (issuer)
-GitLab CI ◀── signed JWT (iss/sub/aud/exp) ── GitLab
+GitLab CI ── demande un token ──▶ GitLab (issuer)
+GitLab CI ◀── JWT signé (iss/sub/aud/exp) ── GitLab
 GitLab CI ── az login --federated-token ──▶ Azure AD
-                                            Azure AD verifies signature + sub
-GitLab CI ◀── session opened (0 secret) ── Azure AD
+                                            Azure AD vérifie signature + sub
+GitLab CI ◀── session ouverte (0 secret) ── Azure AD
 GitLab CI ── docker build + push (image:SHA) ─▶ ACR
 GitLab CI ── az containerapp create/update ──▶ ACA (staging)
 ```
 
 ## Notes
 
-**ACR Tasks forbidden on this subscription.** `az acr build` (server-side build)
-returns `TasksOperationsNotAllowed` here. The `push` stage therefore builds the
-image locally with docker-in-docker, gets an ephemeral ACR token via the OIDC
-identity (`az acr login --expose-token`), runs `docker login` with it, then
-`docker push` — still without any stored secret.
+**ACR Tasks interdit sur cette souscription.** `az acr build` (build côté serveur)
+renvoie `TasksOperationsNotAllowed` ici. L'étape `push` construit donc l'image en
+local avec docker-in-docker, récupère un token ACR éphémère via l'identité OIDC
+(`az acr login --expose-token`), exécute `docker login` avec, puis `docker push` ,
+toujours sans aucun secret stocké.
 
-**Configuration.** The bootstrap config (names, region, subscription) lives in
-`scripts/.env`, versioned in clear since these are only identifiers; adapt the
-values there for another subscription/project.
+**Configuration.** La config du bootstrap (noms, région, souscription) se trouve
+dans `scripts/.env`, versionnée en clair puisqu'il ne s'agit que d'identifiants ;
+adaptez les valeurs pour une autre souscription/projet.
 
-**Teardown.** `scripts/azure-teardown.sh` empties the resource group of all its
-resources (Container Apps before their environment, then the rest), handy to
-start from a clean state. It does not delete the OIDC identity, so the CI can
-re-provision everything on the next run.
+**Teardown.** `scripts/azure-teardown.sh` vide le groupe de ressources de toutes
+ses ressources (Container Apps avant leur environnement, puis le reste), pratique
+pour repartir d'un état propre. Il ne supprime pas l'identité OIDC, donc la CI peut
+tout reprovisionner au passage suivant.
