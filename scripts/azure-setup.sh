@@ -13,10 +13,9 @@ set -euo pipefail
 # Repertoire du script (avant de changer de dossier), pour trouver le .env.
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Configuration externalisee : copier .env.example en .env et adapter les valeurs.
-# Le .env n'est pas versionne (cf .gitignore) ; il ne contient que des identifiants.
+# Configuration lue dans .env (versionne en clair : que des identifiants, pas de secret).
 if [ ! -f "$SCRIPT_DIR/.env" ]; then
-  echo "Erreur : $SCRIPT_DIR/.env introuvable. Copiez .env.example en .env." >&2
+  echo "Erreur : $SCRIPT_DIR/.env introuvable." >&2
   exit 1
 fi
 set -a
