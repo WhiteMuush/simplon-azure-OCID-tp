@@ -1,1 +1,4 @@
 *.log
+
+# Config locale de l'infra Azure (identifiants) : voir scripts/.env.example
+scripts/.env
