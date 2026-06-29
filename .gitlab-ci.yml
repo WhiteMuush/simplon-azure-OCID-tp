@@ -2,9 +2,12 @@ stages:
   - build
   - push
   - deploy
+  - sync
 
 variables:
   IMAGE_NAME: "python-app"
+  # GitHub repo whose wiki mirrors this project's GitLab wiki (NOT a secret).
+  GITHUB_WIKI_REPO: "WhiteMuush/simplon-azure-OCID-tp"
   # Image versioned by the short commit ID (brief's advice)
   IMAGE_TAG: "$CI_COMMIT_SHORT_SHA"
   # Azure identifiers (NOT secrets: no password/key, auth is OIDC).
@@ -117,3 +120,29 @@ deploy-job:
   environment:
     name: staging
     url: $DYNAMIC_ENV_URL
+
+# -----------------------------------------------------------------------------
+# Stage 4: mirror the GitLab wiki to the GitHub wiki
+# Runs on every main push. Reads the GitLab wiki with the job token, adapts the
+# pages (scripts/sync-wiki.py) and pushes the GitHub wiki with GITHUB_TOKEN
+# (masked CI variable). Non-blocking: a wiki hiccup must not fail the pipeline.
+# -----------------------------------------------------------------------------
+wiki-sync-job:
+  stage: sync
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  image: python:3.12-slim
+  allow_failure: true
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
+  script:
+    - git clone "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.com/${CI_PROJECT_PATH}.wiki.git" gl-wiki
+    - git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_WIKI_REPO}.wiki.git" gh-wiki
+    - python scripts/sync-wiki.py gl-wiki gh-wiki
+    - cd gh-wiki
+    - git config user.email "ci@gitlab"
+    - git config user.name "GitLab CI"
+    - git add -A
+    - git diff --cached --quiet && echo "GitHub wiki already up to date." && exit 0
+    - git commit -m "Sync wiki from GitLab"
+    - git push origin HEAD
