@@ -29,9 +29,6 @@ variables:
 # -----------------------------------------------------------------------------
 build-job:
   stage: build
-  # Skip on scheduled pipelines (those only run the wiki sync).
-  rules:
-    - if: '$CI_PIPELINE_SOURCE != "schedule"'
   image: docker:27.3
   services:
     - docker:27.3-dind
@@ -53,7 +50,7 @@ build-job:
 push-job:
   stage: push
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE != "schedule"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
   image: mcr.microsoft.com/azure-cli:latest
   services:
     - docker:27.3-dind
@@ -90,7 +87,7 @@ push-job:
 deploy-job:
   stage: deploy
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE != "schedule"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
   image: mcr.microsoft.com/azure-cli:latest
   id_tokens:
     AZURE_OIDC_TOKEN:
@@ -126,9 +123,8 @@ deploy-job:
 
 # -----------------------------------------------------------------------------
 # Stage 4: mirror the GitLab wiki to the GitHub wiki
-# Wiki edits do not trigger pipelines, so this runs on every main push (and on
-# scheduled/manual pipelines). Reads the GitLab wiki with the job token, adapts
-# the pages (scripts/sync-wiki.py) and pushes the GitHub wiki with GITHUB_TOKEN
+# Runs on every main push. Reads the GitLab wiki with the job token, adapts the
+# pages (scripts/sync-wiki.py) and pushes the GitHub wiki with GITHUB_TOKEN
 # (masked CI variable). Non-blocking: a wiki hiccup must not fail the pipeline.
 # -----------------------------------------------------------------------------
 wiki-sync-job:
