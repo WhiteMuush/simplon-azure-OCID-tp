@@ -9,7 +9,7 @@ set -euo pipefail
 # Configuration externalisee, partagee avec azure-setup.sh (cf scripts/.env).
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ ! -f "$SCRIPT_DIR/.env" ]; then
-  echo "Erreur : $SCRIPT_DIR/.env introuvable. Copiez .env.example en .env." >&2
+  echo "Erreur : $SCRIPT_DIR/.env introuvable." >&2
   exit 1
 fi
 set -a

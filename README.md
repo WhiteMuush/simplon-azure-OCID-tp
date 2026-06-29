@@ -142,12 +142,11 @@ GitLab CI ── az containerapp update ───────▶ ACA (staging)
 
 ### Provisionner l'infra Azure (scripts)
 
-Toute la mise en place côté Azure est automatisée par `scripts/azure-setup.sh`, à lancer **une seule fois** sur un resource group vide après `az login`. Le script enregistre les resource providers, crée l'ACR, la managed identity, une image bootstrap, l'environnement + la Container App, la confiance fédérée OIDC (GitLab → Azure) et les rôles (`AcrPush`/`AcrPull` + `Contributor`), puis affiche les identifiants à reporter dans le `.gitlab-ci.yml`. Il ne contient aucun secret. La configuration (noms, région, abonnement) est externalisée dans `scripts/.env` (non versionné, voir `scripts/.env.example`).
+Toute la mise en place côté Azure est automatisée par `scripts/azure-setup.sh`, à lancer **une seule fois** sur un resource group vide après `az login`. Le script enregistre les resource providers, crée l'ACR, la managed identity, une image bootstrap, l'environnement + la Container App, la confiance fédérée OIDC (GitLab → Azure) et les rôles (`AcrPush`/`AcrPull` + `Contributor`), puis affiche les identifiants à reporter dans le `.gitlab-ci.yml`. Il ne contient aucun secret. La configuration (noms, région, abonnement) est lue dans `scripts/.env`, versionné en clair car ce ne sont que des identifiants ; pour un autre abonnement/projet, il suffit d'y adapter les valeurs.
 
 ```bash
 az login
-cp scripts/.env.example scripts/.env   # puis adapter les valeurs
-./scripts/azure-setup.sh
+./scripts/azure-setup.sh   # lit scripts/.env
 ```
 
 `scripts/azure-teardown.sh` fait l'inverse : il vide le resource group de toutes ses ressources (Container Apps avant leur environnement, puis le reste), pratique pour repartir d'un état propre.
