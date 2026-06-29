@@ -5,10 +5,10 @@ stages:
 
 variables:
   IMAGE_NAME: "python-app"
-  # Versionnage de l'image par l'ID court du commit (conseil du brief)
+  # Image versioned by the short commit ID (brief's advice)
   IMAGE_TAG: "$CI_COMMIT_SHORT_SHA"
-  # Identifiants Azure (PAS des secrets : aucun mot de passe/cle, l'auth est OIDC).
-  # En clair ici par simplicite ; sinon les memes dans Settings > CI/CD > Variables.
+  # Azure identifiers (NOT secrets: no password/key, auth is OIDC).
+  # In clear here for simplicity; otherwise the same in Settings > CI/CD > Variables.
   AZURE_CLIENT_ID: "985f8362-00ff-42b4-bd8a-990c1535c775"
   AZURE_TENANT_ID: "a2e466aa-4f86-4545-b5b8-97da7c8febf3"
   AZURE_SUBSCRIPTION_ID: "697b55db-e8fc-4901-9c36-70c71778f7d5"
@@ -20,9 +20,9 @@ variables:
   MI_NAME: "gitlab-ci"
 
 # -----------------------------------------------------------------------------
-# Stage 1 : build + smoke test
-# Valide que l'image se construit et que le conteneur démarre. Ne pousse rien.
-# Tourne sur toutes les branches (les stages suivants seulement sur main).
+# Stage 1: build + smoke test
+# Checks that the image builds and the container starts. Pushes nothing.
+# Runs on all branches (the following stages only on main).
 # -----------------------------------------------------------------------------
 build-job:
   stage: build
@@ -38,11 +38,11 @@ build-job:
     - docker stop CI
 
 # -----------------------------------------------------------------------------
-# Stage 2 : (cree l'ACR si besoin) build + push vers Azure Container Registry
-# La CI cree elle-meme le registre (role Contributor sur le RG). ACR Tasks etant
-# interdit sur cet abonnement, on build en docker-in-docker et on pousse apres un
-# login ACR obtenu via l'identite OIDC (jeton ephemere, sans secret stocke).
-# Image taguee avec l'ID du commit ET latest.
+# Stage 2: (creates the ACR if needed) build + push to Azure Container Registry
+# The CI creates the registry itself (Contributor role on the RG). Since ACR
+# Tasks is forbidden on this subscription, we build with docker-in-docker and
+# push after an ACR login obtained via the OIDC identity (ephemeral token, no
+# stored secret). Image tagged with the commit ID AND latest.
 # -----------------------------------------------------------------------------
 push-job:
   stage: push
@@ -60,14 +60,14 @@ push-job:
     AZURE_OIDC_TOKEN:
       aud: api://AzureADTokenExchange
   before_script:
-    # L'image azure-cli (Azure Linux) n'a pas le client docker.
+    # The azure-cli image (Azure Linux) has no docker client.
     - tdnf install -y docker-cli
   script:
     - az login --service-principal -u "$AZURE_CLIENT_ID" -t "$AZURE_TENANT_ID" --federated-token "$AZURE_OIDC_TOKEN"
     - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
-    # Cree le registre s'il n'existe pas encore (idempotent).
+    # Create the registry if it does not exist yet (idempotent).
     - az acr create -g "$RESOURCE_GROUP" -n "$ACR_NAME" --sku Basic --only-show-errors
-    # Jeton ACR ephemere via l'identite OIDC (role AcrPush), sans secret stocke.
+    # Ephemeral ACR token via the OIDC identity (AcrPush role), no stored secret.
     - ACR_TOKEN=$(az acr login --name "$ACR_NAME" --expose-token --query accessToken -o tsv)
     - docker login "$ACR_NAME.azurecr.io" --username 00000000-0000-0000-0000-000000000000 --password "$ACR_TOKEN"
     - docker build -t "$ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG" -t "$ACR_NAME.azurecr.io/$IMAGE_NAME:latest" .
@@ -75,11 +75,11 @@ push-job:
     - docker push "$ACR_NAME.azurecr.io/$IMAGE_NAME:latest"
 
 # -----------------------------------------------------------------------------
-# Stage 3 : (cree l'environment + l'app si besoin) deploiement sur ACA
-# La CI cree l'environment et la Container App au premier passage, puis se
-# contente de mettre a jour l'image aux passages suivants. L'app tire l'image
-# avec l'identite managee (role AcrPull). L'URL publique est exposee a GitLab
-# comme environnement "staging" (URL dynamique via rapport dotenv).
+# Stage 3: (creates the environment + the app if needed) deploy to ACA
+# The CI creates the environment and the Container App on the first run, then
+# only updates the image on later runs. The app pulls the image with the managed
+# identity (AcrPull role). The public URL is exposed to GitLab as the "staging"
+# environment (dynamic URL via a dotenv report).
 # -----------------------------------------------------------------------------
 deploy-job:
   stage: deploy
@@ -93,11 +93,11 @@ deploy-job:
     - az login --service-principal -u "$AZURE_CLIENT_ID" -t "$AZURE_TENANT_ID" --federated-token "$AZURE_OIDC_TOKEN"
     - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
     - az extension add --name containerapp --only-show-errors
-    # Environment Container Apps (idempotent).
+    # Container Apps environment (idempotent).
     - az containerapp env create -g "$RESOURCE_GROUP" -n "$ACA_ENV" --location "$LOCATION" --only-show-errors
     - MI_ID=$(az identity show -g "$RESOURCE_GROUP" -n "$MI_NAME" --query id -o tsv)
     - IMAGE="$ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG"
-    # Cree l'app au 1er passage, sinon met juste a jour l'image.
+    # Create the app on the first run, otherwise just update the image.
     - |
       if az containerapp show -g "$RESOURCE_GROUP" -n "$ACA_NAME" >/dev/null 2>&1; then
         az containerapp update -g "$RESOURCE_GROUP" -n "$ACA_NAME" --image "$IMAGE"
@@ -108,7 +108,7 @@ deploy-job:
           --user-assigned "$MI_ID" \
           --registry-server "$ACR_NAME.azurecr.io" --registry-identity "$MI_ID"
       fi
-    # Expose l'URL publique a GitLab (environnement dynamique).
+    # Expose the public URL to GitLab (dynamic environment).
     - FQDN=$(az containerapp show -g "$RESOURCE_GROUP" -n "$ACA_NAME" --query properties.configuration.ingress.fqdn -o tsv)
     - echo "DYNAMIC_ENV_URL=https://$FQDN" >> deploy.env
   artifacts:

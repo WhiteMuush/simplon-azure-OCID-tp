@@ -1,25 +1,23 @@
 #!/usr/bin/env bash
 #
-# Vide le resource group de TOUTES ses ressources (garde le RG lui-meme).
-# Ordre important : les Container Apps avant leur environment, sinon la suppression
-# de l'environment echoue tant qu'une app y vit encore.
+# Empties the resource group of ALL its resources (keeps the RG itself).
+# Order matters: Container Apps before their environment, otherwise deleting the
+# environment fails while an app still lives in it.
 
 set -euo pipefail
 
-# Configuration externalisee, partagee avec azure-setup.sh (cf scripts/.env).
+# Externalized config, shared with azure-setup.sh (see scripts/.env).
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ ! -f "$SCRIPT_DIR/.env" ]; then
-  echo "Erreur : $SCRIPT_DIR/.env introuvable." >&2
+  echo "Error: $SCRIPT_DIR/.env not found." >&2
   exit 1
 fi
-set -a
 # shellcheck source=/dev/null
-. "$SCRIPT_DIR/.env"
-set +a
+set -a; . "$SCRIPT_DIR/.env"; set +a
 
 az account set --subscription "$SUBSCRIPTION"
 
-# Supprime les Container Apps (bloquent la suppression de l'environment).
+# Delete the Container Apps (they block deleting the environment).
 delete_container_apps() {
   local apps
   apps=$(az containerapp list -g "$RG" --query "[].name" -o tsv)
@@ -29,7 +27,7 @@ delete_container_apps() {
   done
 }
 
-# Supprime les environments Container Apps.
+# Delete the Container Apps environments.
 delete_environments() {
   local envs
   envs=$(az containerapp env list -g "$RG" --query "[].name" -o tsv)
@@ -39,12 +37,12 @@ delete_environments() {
   done
 }
 
-# Supprime tout le reste (ACR, managed identity, log analytics, etc.) par id.
+# Delete everything else (ACR, managed identity, log analytics, etc.) by id.
 delete_remaining() {
   local ids
   ids=$(az resource list -g "$RG" --query "[].id" -o tsv)
   if [ -n "$ids" ]; then
-    echo "-> ressources restantes :"
+    echo "-> remaining resources:"
     echo "$ids"
     az resource delete --ids $ids
   fi
@@ -54,7 +52,7 @@ main() {
   delete_container_apps
   delete_environments
   delete_remaining
-  echo "=== contenu final du RG (vide attendu) ==="
+  echo "=== final RG content (expected empty) ==="
   az resource list -g "$RG" --query "[].name" -o tsv
 }
 
