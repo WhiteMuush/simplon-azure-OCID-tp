@@ -1,18 +1,96 @@
-default:
-  image: docker:27.3
-  services: 
-    - docker:27.3-dind
-
-variables:
-  DOCKER_TLS_CERTDIR: "/certs"
-
 stages:
   - build
+  - push
+  - deploy
 
+variables:
+  IMAGE_NAME: "python-app"
+  # Versionnage de l'image par l'ID court du commit (conseil du brief)
+  IMAGE_TAG: "$CI_COMMIT_SHORT_SHA"
+  # Identifiants Azure (PAS des secrets : aucun mot de passe/cle, l'auth est OIDC).
+  # En clair ici par simplicite ; sinon les memes dans Settings > CI/CD > Variables.
+  AZURE_CLIENT_ID: "826cb4f6-c8ab-4af4-9ad5-47d585cb64a3"
+  AZURE_TENANT_ID: "a2e466aa-4f86-4545-b5b8-97da7c8febf3"
+  AZURE_SUBSCRIPTION_ID: "697b55db-e8fc-4901-9c36-70c71778f7d5"
+  ACR_NAME: "acrmelvinpyweb"
+  ACA_NAME: "ca-melvin-pyweb-staging"
+  RESOURCE_GROUP: "melvin-petit-dev"
+  ACA_FQDN: "ca-melvin-pyweb-staging.icyforest-00544f21.francecentral.azurecontainerapps.io"
+
+# -----------------------------------------------------------------------------
+# Stage 1 : build + smoke test
+# Valide que l'image se construit et que le conteneur démarre. Ne pousse rien.
+# -----------------------------------------------------------------------------
 build-job:
   stage: build
+  image: docker:27.3
+  services:
+    - docker:27.3-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
   script:
-    - docker build -t python-app .
-    - docker run -d -p 8080:8080 --name CI python-app
+    - docker build -t $IMAGE_NAME .
+    - docker run -d -p 8080:8080 --name CI $IMAGE_NAME
     - sleep 3
     - docker stop CI
+
+# -----------------------------------------------------------------------------
+# Stage 2 : build + push vers Azure Container Registry (ACR)
+# ACR Tasks (`az acr build`) est interdit sur cet abonnement : on build en local
+# avec docker-in-docker, puis on pousse apres un login ACR obtenu via OIDC.
+# Auth sans secret : login OIDC -> jeton ACR ephemere (--expose-token) -> docker login.
+# Image taguee avec l'ID du commit ET latest.
+# -----------------------------------------------------------------------------
+push-job:
+  stage: push
+  # OIDC : le federated credential ne fait confiance qu'a la branche main.
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  image: mcr.microsoft.com/azure-cli:latest
+  services:
+    - docker:27.3-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_HOST: "tcp://docker:2376"
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: "/certs/client"
+  id_tokens:
+    AZURE_OIDC_TOKEN:
+      aud: api://AzureADTokenExchange
+  before_script:
+    # L'image azure-cli (Azure Linux) n'a pas le client docker.
+    - tdnf install -y docker-cli
+  script:
+    - az login --service-principal -u "$AZURE_CLIENT_ID" -t "$AZURE_TENANT_ID" --federated-token "$AZURE_OIDC_TOKEN"
+    - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
+    # Jeton ACR ephemere via l'identite OIDC (role AcrPush), sans secret stocke.
+    - ACR_TOKEN=$(az acr login --name "$ACR_NAME" --expose-token --query accessToken -o tsv)
+    - docker login "$ACR_NAME.azurecr.io" --username 00000000-0000-0000-0000-000000000000 --password "$ACR_TOKEN"
+    - docker build -t "$ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG" -t "$ACR_NAME.azurecr.io/$IMAGE_NAME:latest" .
+    - docker push "$ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG"
+    - docker push "$ACR_NAME.azurecr.io/$IMAGE_NAME:latest"
+
+# -----------------------------------------------------------------------------
+# Stage 3 : deploiement sur Azure Container Apps (ACA)
+# Reprend l'image poussee au stage precedent (meme tag = ID du commit).
+# Environnement GitLab "staging" pointant vers l'URL publique de l'app.
+# -----------------------------------------------------------------------------
+deploy-job:
+  stage: deploy
+  # Idem push-job : deploiement uniquement depuis main (confiance OIDC).
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  image: mcr.microsoft.com/azure-cli:latest
+  id_tokens:
+    AZURE_OIDC_TOKEN:
+      aud: api://AzureADTokenExchange
+  environment:
+    name: staging
+    url: https://$ACA_FQDN
+  script:
+    - az login --service-principal -u "$AZURE_CLIENT_ID" -t "$AZURE_TENANT_ID" --federated-token "$AZURE_OIDC_TOKEN"
+    - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
+    - az containerapp update
+      --name "$ACA_NAME"
+      --resource-group "$RESOURCE_GROUP"
+      --image "$ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG"
