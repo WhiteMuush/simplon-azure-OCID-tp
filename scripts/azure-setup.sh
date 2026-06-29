@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 #
-# Bootstrap one-shot de l'infra Azure pour le deploiement de l'app via GitLab CI.
-# A lancer UNE SEULE FOIS, sur un resource group vide.
-# Cree : ACR, managed identity, image bootstrap, roles, environment + Container App,
-# confiance federee OIDC (GitLab -> Azure), et affiche les variables a mettre dans GitLab.
+# Bootstrap OIDC, a lancer UNE SEULE FOIS en local (az login), par un Owner.
 #
-# Ne contient AUCUN secret : on s'authentifie a Azure en OIDC depuis la CI.
-# Prerequis : etre connecte ( az login ) et avoir le Dockerfile a la racine du repo.
+# C'est le SEUL morceau qui ne peut pas venir de la CI : pour que la CI se
+# connecte a Azure sans secret (OIDC), il faut qu'une identite + une confiance
+# federee existent DEJA. Or les creer demande d'etre deja authentifie => oeuf
+# et poule. Tout le reste (ACR, image, environment + Container App) est cree par
+# la CI elle-meme une fois connectee via cette identite (voir .gitlab-ci.yml).
+#
+# Ce script cree donc le minimum : resource group, providers, managed identity,
+# federated credential (GitLab main -> Azure) et les roles au scope du RG.
+# Aucun secret : la CI s'authentifie en OIDC.
 
 set -euo pipefail
 
-# Repertoire du script (avant de changer de dossier), pour trouver le .env.
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Configuration lue dans .env (versionne en clair : que des identifiants, pas de secret).
@@ -23,21 +26,18 @@ set -a
 . "$SCRIPT_DIR/.env"
 set +a
 
-# Se placer a la racine du repo (le script vit dans scripts/), pour le build docker.
-cd "$SCRIPT_DIR/.."
-
 # Cible explicitement le bon abonnement (independant de l'abo actif du CLI).
 select_subscription() {
   az account set --subscription "$SUBSCRIPTION"
 }
 
-# Cree le resource group (le nouvel abonnement est vide).
+# Cree le resource group : il porte le role (scope RG) et accueillera l'infra CI.
 create_rg() {
   az group create -n "$RG" -l "$LOC"
 }
 
 # Enregistre les resource providers (abonnement neuf : aucun actif par defaut).
-# --wait bloque jusqu'a l'etat Registered, sinon les creations suivantes echouent.
+# Fait ici car ca demande un droit niveau abonnement que la CI (scope RG) n'a pas.
 register_providers() {
   local ns
   for ns in Microsoft.ContainerRegistry Microsoft.App Microsoft.OperationalInsights; do
@@ -45,47 +45,9 @@ register_providers() {
   done
 }
 
-# Registre d'images prive.
-create_acr() {
-  az acr create -g "$RG" -n "$ACR" --sku Basic
-}
-
 # Identite que la CI incarnera via OIDC.
 create_identity() {
   az identity create -g "$RG" -n "$MI"
-}
-
-# 1er build + push : l'app a besoin d'une image existante pour demarrer.
-# Build local + push (ACR Tasks / `az acr build` interdit sur cet abonnement).
-build_image() {
-  az acr login -n "$ACR"
-  docker build -t "$ACR.azurecr.io/python-app:bootstrap" .
-  docker push "$ACR.azurecr.io/python-app:bootstrap"
-}
-
-# Droits de l'identite sur l'ACR : push (build CI) + pull (app).
-assign_acr_roles() {
-  local acr_id principal
-  acr_id=$(az acr show -n "$ACR" --query id -o tsv)
-  principal=$(az identity show -g "$RG" -n "$MI" --query principalId -o tsv)
-  az role assignment create --assignee "$principal" --role AcrPush --scope "$acr_id"
-  az role assignment create --assignee "$principal" --role AcrPull --scope "$acr_id"
-}
-
-# Environment + Container App (port 8080, identite attachee pour tirer l'image sans secret).
-create_app() {
-  local mi_id
-  az containerapp env create -g "$RG" -n "$ENVNAME" --location "$LOC"
-  mi_id=$(az identity show -g "$RG" -n "$MI" --query id -o tsv)
-  az containerapp create \
-    -g "$RG" -n "$APP" \
-    --environment "$ENVNAME" \
-    --image "$ACR.azurecr.io/python-app:bootstrap" \
-    --target-port 8080 \
-    --ingress external \
-    --user-assigned "$mi_id" \
-    --registry-server "$ACR.azurecr.io" \
-    --registry-identity "$mi_id"
 }
 
 # Confiance federee OIDC : Azure fait confiance aux JWT de ce projet GitLab, branche main.
@@ -99,30 +61,35 @@ setup_oidc() {
     --audiences "api://AzureADTokenExchange"
 }
 
-# Droit de deployer : mettre a jour l'ACA depuis la CI.
-assign_deploy_role() {
-  local principal sub
+# Roles de l'identite, au scope du RG (moindre privilege) :
+# - Contributor : creer/gerer ACR + Container App depuis la CI
+# - AcrPush     : pousser l'image depuis la CI (data-plane registry)
+# - AcrPull     : laisser l'app ACA tirer l'image avec son identite
+# Les roles ACR sont au scope RG donc valent pour l'ACR que la CI creera dedans.
+assign_roles() {
+  local principal scope
   principal=$(az identity show -g "$RG" -n "$MI" --query principalId -o tsv)
-  sub=$(az account show --query id -o tsv)
-  az role assignment create --assignee "$principal" \
-    --role Contributor \
-    --scope "/subscriptions/$sub/resourceGroups/$RG"
+  scope="/subscriptions/$SUBSCRIPTION/resourceGroups/$RG"
+  az role assignment create --assignee "$principal" --role Contributor --scope "$scope"
+  az role assignment create --assignee "$principal" --role AcrPush --scope "$scope"
+  az role assignment create --assignee "$principal" --role AcrPull --scope "$scope"
 }
 
-# Variables a coller dans GitLab (ou en clair dans .gitlab-ci.yml). Identifiants, pas des secrets.
-print_gitlab_vars() {
+# Identifiants a reporter dans le bloc variables du .gitlab-ci.yml (pas des secrets).
+print_ci_vars() {
   cat <<EOF
 
 ==========================================================
- [Azure Setup] Récapitulatif du script :
+ [Azure Bootstrap] Identifiants pour .gitlab-ci.yml :
 ==========================================================
 AZURE_CLIENT_ID       = $(az identity show -g "$RG" -n "$MI" --query clientId -o tsv)
 AZURE_TENANT_ID       = $(az account show --query tenantId -o tsv)
 AZURE_SUBSCRIPTION_ID = $(az account show --query id -o tsv)
+RESOURCE_GROUP        = $RG
 ACR_NAME              = $ACR
 ACA_NAME              = $APP
-RESOURCE_GROUP        = $RG
-ACA_FQDN              = $(az containerapp show -g "$RG" -n "$APP" --query properties.configuration.ingress.fqdn -o tsv)
+ACA_ENV               = $ENVNAME
+LOCATION              = $LOC
 EOF
 }
 
@@ -130,14 +97,10 @@ main() {
   select_subscription
   create_rg
   register_providers
-  create_acr
   create_identity
-  build_image
-  assign_acr_roles
-  create_app
   setup_oidc
-  assign_deploy_role
-  print_gitlab_vars
+  assign_roles
+  print_ci_vars
 }
 
 main "$@"
