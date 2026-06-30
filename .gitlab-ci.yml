@@ -105,7 +105,15 @@ deploy-job:
           --user-assigned "$MI_ID" \
           --registry-server "$ACR_NAME.azurecr.io" --registry-identity "$MI_ID"
       fi
-    - FQDN=$(az containerapp show -g "$RESOURCE_GROUP" -n "$ACA_NAME" --query properties.configuration.ingress.fqdn -o tsv)
+    # Right after create/update the API can briefly return 412; retry until the
+    # app settles and exposes its FQDN.
+    - |
+      for i in $(seq 1 12); do
+        FQDN=$(az containerapp show -g "$RESOURCE_GROUP" -n "$ACA_NAME" --query properties.configuration.ingress.fqdn -o tsv 2>/dev/null) && [ -n "$FQDN" ] && break
+        echo "FQDN not ready yet (attempt $i), retrying in 10s..."
+        sleep 10
+      done
+    - '[ -n "$FQDN" ] || { echo "ERROR: could not read FQDN"; exit 1; }'
     - echo "DYNAMIC_ENV_URL=https://$FQDN" >> deploy.env
   artifacts:
     reports:
