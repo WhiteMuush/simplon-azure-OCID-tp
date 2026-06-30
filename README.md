@@ -145,9 +145,9 @@ az login
 ./scripts/azure-setup.sh   # lit scripts/.env, à exécuter une seule fois
 ```
 
-# Rendu sur Azure : 
+### Rendu final sur Azure : 
 
-![Azure-screenshot](image.png)
+![Azure-screenshot](./src/img/image.png)
 
 
 ### Diagramme du flux OIDC
