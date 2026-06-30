@@ -105,7 +105,11 @@ deploy-job:
     - az login --service-principal -u "$AZURE_CLIENT_ID" -t "$AZURE_TENANT_ID" --federated-token "$AZURE_OIDC_TOKEN"
     - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
     - az extension add --name containerapp --only-show-errors
-    - az containerapp env create -g "$RESOURCE_GROUP" -n "$ACA_ENV" --location "$LOCATION" --only-show-errors
+    # Only create the environment if it does not exist yet.
+    - |
+      if ! az containerapp env show -g "$RESOURCE_GROUP" -n "$ACA_ENV" >/dev/null 2>&1; then
+        az containerapp env create -g "$RESOURCE_GROUP" -n "$ACA_ENV" --location "$LOCATION" --only-show-errors
+      fi
     - MI_ID=$(az identity show -g "$RESOURCE_GROUP" -n "$MI_NAME" --query id -o tsv)
     - IMAGE="$ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG"
     - |
