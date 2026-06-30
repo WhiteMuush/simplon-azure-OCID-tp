@@ -21,6 +21,19 @@ variables:
   MI_NAME: "gitlab-ci"
 
 # -----------------------------------------------------------------------------
+# Pipeline triggering: run a merge-request pipeline when an MR is open (so the
+# MR gets a head pipeline and the "Pipelines must succeed" check can pass), and
+# a branch pipeline otherwise. The middle rule prevents duplicate pipelines
+# (branch + MR) for the same push.
+# -----------------------------------------------------------------------------
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS'
+      when: never
+    - if: '$CI_COMMIT_BRANCH'
+
+# -----------------------------------------------------------------------------
 # Stage 1: build + smoke test
 # Checks that the image builds and the container starts. Pushes nothing.
 # Runs on all branches (the following stages only on main).
@@ -105,7 +118,15 @@ deploy-job:
           --user-assigned "$MI_ID" \
           --registry-server "$ACR_NAME.azurecr.io" --registry-identity "$MI_ID"
       fi
-    - FQDN=$(az containerapp show -g "$RESOURCE_GROUP" -n "$ACA_NAME" --query properties.configuration.ingress.fqdn -o tsv)
+    # Right after create/update the API can briefly return 412; retry until the
+    # app settles and exposes its FQDN.
+    - |
+      for i in $(seq 1 12); do
+        FQDN=$(az containerapp show -g "$RESOURCE_GROUP" -n "$ACA_NAME" --query properties.configuration.ingress.fqdn -o tsv 2>/dev/null) && [ -n "$FQDN" ] && break
+        echo "FQDN not ready yet (attempt $i), retrying in 10s..."
+        sleep 10
+      done
+    - '[ -n "$FQDN" ] || { echo "ERROR: could not read FQDN"; exit 1; }'
     - echo "DYNAMIC_ENV_URL=https://$FQDN" >> deploy.env
   artifacts:
     reports:
