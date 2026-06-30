@@ -5,10 +5,8 @@ stages:
 
 variables:
   IMAGE_NAME: "python-app"
-  # Image versioned by the short commit ID (brief's advice)
+  # Image versioned by the short commit ID
   IMAGE_TAG: "$CI_COMMIT_SHORT_SHA"
-  # Azure identifiers (NOT secrets: no password/key, auth is OIDC).
-  # In clear here for simplicity; otherwise the same in Settings > CI/CD > Variables.
   AZURE_CLIENT_ID: "985f8362-00ff-42b4-bd8a-990c1535c775"
   AZURE_TENANT_ID: "a2e466aa-4f86-4545-b5b8-97da7c8febf3"
   AZURE_SUBSCRIPTION_ID: "697b55db-e8fc-4901-9c36-70c71778f7d5"
@@ -60,14 +58,11 @@ push-job:
     AZURE_OIDC_TOKEN:
       aud: api://AzureADTokenExchange
   before_script:
-    # The azure-cli image (Azure Linux) has no docker client.
     - tdnf install -y docker-cli
   script:
     - az login --service-principal -u "$AZURE_CLIENT_ID" -t "$AZURE_TENANT_ID" --federated-token "$AZURE_OIDC_TOKEN"
     - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
-    # Create the registry if it does not exist yet (idempotent).
     - az acr create -g "$RESOURCE_GROUP" -n "$ACR_NAME" --sku Basic --only-show-errors
-    # Ephemeral ACR token via the OIDC identity (AcrPush role), no stored secret.
     - ACR_TOKEN=$(az acr login --name "$ACR_NAME" --expose-token --query accessToken -o tsv)
     - docker login "$ACR_NAME.azurecr.io" --username 00000000-0000-0000-0000-000000000000 --password "$ACR_TOKEN"
     - docker build -t "$ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG" -t "$ACR_NAME.azurecr.io/$IMAGE_NAME:latest" .
@@ -85,6 +80,7 @@ deploy-job:
   stage: deploy
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
   image: mcr.microsoft.com/azure-cli:latest
   id_tokens:
     AZURE_OIDC_TOKEN:
@@ -93,11 +89,9 @@ deploy-job:
     - az login --service-principal -u "$AZURE_CLIENT_ID" -t "$AZURE_TENANT_ID" --federated-token "$AZURE_OIDC_TOKEN"
     - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
     - az extension add --name containerapp --only-show-errors
-    # Container Apps environment (idempotent).
     - az containerapp env create -g "$RESOURCE_GROUP" -n "$ACA_ENV" --location "$LOCATION" --only-show-errors
     - MI_ID=$(az identity show -g "$RESOURCE_GROUP" -n "$MI_NAME" --query id -o tsv)
     - IMAGE="$ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG"
-    # Create the app on the first run, otherwise just update the image.
     - |
       if az containerapp show -g "$RESOURCE_GROUP" -n "$ACA_NAME" >/dev/null 2>&1; then
         az containerapp update -g "$RESOURCE_GROUP" -n "$ACA_NAME" --image "$IMAGE"
@@ -108,7 +102,6 @@ deploy-job:
           --user-assigned "$MI_ID" \
           --registry-server "$ACR_NAME.azurecr.io" --registry-identity "$MI_ID"
       fi
-    # Expose the public URL to GitLab (dynamic environment).
     - FQDN=$(az containerapp show -g "$RESOURCE_GROUP" -n "$ACA_NAME" --query properties.configuration.ingress.fqdn -o tsv)
     - echo "DYNAMIC_ENV_URL=https://$FQDN" >> deploy.env
   artifacts:
