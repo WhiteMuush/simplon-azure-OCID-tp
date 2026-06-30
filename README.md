@@ -145,6 +145,11 @@ az login
 ./scripts/azure-setup.sh   # lit scripts/.env, à exécuter une seule fois
 ```
 
+### Rendu final sur Azure : 
+
+![Azure-screenshot](./src/img/image.png)
+
+
 ### Diagramme du flux OIDC
 
 ```mermaid
@@ -193,3 +198,5 @@ adaptez les valeurs pour une autre souscription/projet.
 ses ressources (Container Apps avant leur environnement, puis le reste), pratique
 pour repartir d'un état propre. Il ne supprime pas l'identité OIDC, donc la CI peut
 tout reprovisionner au passage suivant.
+
+
