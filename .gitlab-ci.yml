@@ -101,61 +101,7 @@ push-job:
     - docker push "$ACR_NAME.azurecr.io/$IMAGE_NAME:latest"
 
 # -----------------------------------------------------------------------------
-# Stage 4: (creates the environment + the app if needed) deploy to ACA
-# The CI creates the environment and the Container App on the first run, then
-# only updates the image on later runs. The app pulls the image with the managed
-# identity (AcrPull role). The public URL is exposed to GitLab as the "staging"
-# environment (dynamic URL via a dotenv report).
-# -----------------------------------------------------------------------------
-deploy-job:
-  stage: deploy
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
-      when: manual
-  image: mcr.microsoft.com/azure-cli:latest
-  id_tokens:
-    AZURE_OIDC_TOKEN:
-      aud: api://AzureADTokenExchange
-  script:
-    - az login --service-principal -u "$AZURE_CLIENT_ID" -t "$AZURE_TENANT_ID" --federated-token "$AZURE_OIDC_TOKEN"
-    - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
-    - az extension add --name containerapp --only-show-errors
-    # Only create the environment if it does not exist yet.
-    - |
-      if ! az containerapp env show -g "$RESOURCE_GROUP" -n "$ACA_ENV" >/dev/null 2>&1; then
-        az containerapp env create -g "$RESOURCE_GROUP" -n "$ACA_ENV" --location "$LOCATION" --only-show-errors
-      fi
-    - MI_ID=$(az identity show -g "$RESOURCE_GROUP" -n "$MI_NAME" --query id -o tsv)
-    - IMAGE="$ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG"
-    - |
-      if az containerapp show -g "$RESOURCE_GROUP" -n "$ACA_NAME" >/dev/null 2>&1; then
-        az containerapp update -g "$RESOURCE_GROUP" -n "$ACA_NAME" --image "$IMAGE"
-      else
-        az containerapp create -g "$RESOURCE_GROUP" -n "$ACA_NAME" \
-          --environment "$ACA_ENV" --image "$IMAGE" \
-          --target-port 8080 --ingress external \
-          --user-assigned "$MI_ID" \
-          --registry-server "$ACR_NAME.azurecr.io" --registry-identity "$MI_ID"
-      fi
-    # Right after create/update the API can briefly return 412; retry until the
-    # app settles and exposes its FQDN.
-    - |
-      for i in $(seq 1 12); do
-        FQDN=$(az containerapp show -g "$RESOURCE_GROUP" -n "$ACA_NAME" --query properties.configuration.ingress.fqdn -o tsv 2>/dev/null) && [ -n "$FQDN" ] && break
-        echo "FQDN not ready yet (attempt $i), retrying in 10s..."
-        sleep 10
-      done
-    - '[ -n "$FQDN" ] || { echo "ERROR: could not read FQDN"; exit 1; }'
-    - echo "DYNAMIC_ENV_URL=https://$FQDN" >> deploy.env
-  artifacts:
-    reports:
-      dotenv: deploy.env
-  environment:
-    name: staging
-    url: $DYNAMIC_ENV_URL
-
-# -----------------------------------------------------------------------------
-# stage 4.5 (Bonus): optional ACA environment lifecycle, decoupled from deploy-job
+# stage 4 (Bonus): optional ACA environment lifecycle, decoupled from deploy-job
 # (which already creates the env/app on first run). Manual only, never blocks
 # the pipeline (allow_failure).
 # -----------------------------------------------------------------------------
