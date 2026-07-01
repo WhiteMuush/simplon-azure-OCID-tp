@@ -1,7 +1,12 @@
+include:
+  - template: Jobs/SAST.gitlab-ci.yml
+
 stages:
+  - test
   - build
   - push
   - deploy
+  - infra
   - sync
 
 variables:
@@ -34,7 +39,17 @@ workflow:
     - if: '$CI_COMMIT_BRANCH'
 
 # -----------------------------------------------------------------------------
-# Stage 1: build + smoke test
+# Stage 1: lint (SAST comes from the included template, also stage "test")
+# -----------------------------------------------------------------------------
+lint-job:
+  stage: test
+  image: python:3.12-slim
+  script:
+    - pip install --quiet ruff
+    - ruff check .
+
+# -----------------------------------------------------------------------------
+# Stage 2: build + smoke test
 # Checks that the image builds and the container starts. Pushes nothing.
 # Runs on all branches (the following stages only on main).
 # -----------------------------------------------------------------------------
@@ -52,7 +67,7 @@ build-job:
     - docker stop CI
 
 # -----------------------------------------------------------------------------
-# Stage 2: (creates the ACR if needed) build + push to Azure Container Registry
+# Stage 3: (creates the ACR if needed) build + push to Azure Container Registry
 # The CI creates the registry itself (Contributor role on the RG). Since ACR
 # Tasks is forbidden on this subscription, we build with docker-in-docker and
 # push after an ACR login obtained via the OIDC identity (ephemeral token, no
@@ -86,7 +101,7 @@ push-job:
     - docker push "$ACR_NAME.azurecr.io/$IMAGE_NAME:latest"
 
 # -----------------------------------------------------------------------------
-# Stage 3: (creates the environment + the app if needed) deploy to ACA
+# Stage 4: (creates the environment + the app if needed) deploy to ACA
 # The CI creates the environment and the Container App on the first run, then
 # only updates the image on later runs. The app pulls the image with the managed
 # identity (AcrPull role). The public URL is exposed to GitLab as the "staging"
@@ -140,7 +155,51 @@ deploy-job:
     url: $DYNAMIC_ENV_URL
 
 # -----------------------------------------------------------------------------
-# Stage 4: mirror the GitLab wiki to the GitHub wiki
+# stage 4.5 (Bonus): optional ACA environment lifecycle, decoupled from deploy-job
+# (which already creates the env/app on first run). Manual only, never blocks
+# the pipeline (allow_failure).
+# -----------------------------------------------------------------------------
+infra:setup:
+  stage: infra
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  when: manual
+  allow_failure: true
+  image: mcr.microsoft.com/azure-cli:latest
+  id_tokens:
+    AZURE_OIDC_TOKEN:
+      aud: api://AzureADTokenExchange
+  script:
+    - az login --service-principal -u "$AZURE_CLIENT_ID" -t "$AZURE_TENANT_ID" --federated-token "$AZURE_OIDC_TOKEN"
+    - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
+    - az extension add --name containerapp --only-show-errors
+    - az containerapp env create -g "$RESOURCE_GROUP" -n "$ACA_ENV" --location "$LOCATION" --only-show-errors
+
+infra:teardown:
+  stage: infra
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  when: manual
+  allow_failure: true
+  image: mcr.microsoft.com/azure-cli:latest
+  id_tokens:
+    AZURE_OIDC_TOKEN:
+      aud: api://AzureADTokenExchange
+  script:
+    - az login --service-principal -u "$AZURE_CLIENT_ID" -t "$AZURE_TENANT_ID" --federated-token "$AZURE_OIDC_TOKEN"
+    - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
+    - az extension add --name containerapp --only-show-errors
+    - |
+      if az containerapp show -g "$RESOURCE_GROUP" -n "$ACA_NAME" >/dev/null 2>&1; then
+        az containerapp delete -g "$RESOURCE_GROUP" -n "$ACA_NAME" --yes
+      fi
+    - |
+      if az containerapp env show -g "$RESOURCE_GROUP" -n "$ACA_ENV" >/dev/null 2>&1; then
+        az containerapp env delete -g "$RESOURCE_GROUP" -n "$ACA_ENV" --yes
+      fi
+
+# -----------------------------------------------------------------------------
+# Stage 5: mirror the GitLab wiki to the GitHub wiki
 # Runs on every main push. Reads the GitLab wiki with the job token, adapts the
 # pages (scripts/sync-wiki.py) and pushes the GitHub wiki with GITHUB_TOKEN
 # (masked CI variable). Non-blocking: a wiki hiccup must not fail the pipeline.
