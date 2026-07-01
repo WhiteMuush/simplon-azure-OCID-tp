@@ -37,10 +37,12 @@ delete_environments() {
   done
 }
 
-# Delete everything else (ACR, managed identity, log analytics, etc.) by id.
+# Delete everything else (ACR, log analytics, etc.) by id. Keeps the managed
+# identity ($MI): it holds the OIDC federated trust used to re-auth this
+# script, deleting it would lock the pipeline out.
 delete_remaining() {
   local ids
-  ids=$(az resource list -g "$RG" --query "[].id" -o tsv)
+  ids=$(az resource list -g "$RG" --query "[?type!='Microsoft.ManagedIdentity/userAssignedIdentities'].id" -o tsv)
   if [ -n "$ids" ]; then
     echo "-> remaining resources:"
     echo "$ids"
@@ -52,7 +54,7 @@ main() {
   delete_container_apps
   delete_environments
   delete_remaining
-  echo "=== final RG content (expected empty) ==="
+  echo "=== final RG content (expected: only $MI) ==="
   az resource list -g "$RG" --query "[].name" -o tsv
 }
 

@@ -8,9 +8,9 @@ variables:
   IMAGE_NAME: "python-app"
   # GitHub repo whose wiki mirrors this project's GitLab wiki (NOT a secret).
   GITHUB_WIKI_REPO: "WhiteMuush/simplon-azure-OCID-tp"
-  # Image versioned by the short commit ID (brief's advice)
+  # Image versioned by the short commit ID
   IMAGE_TAG: "$CI_COMMIT_SHORT_SHA"
-  AZURE_CLIENT_ID: "985f8362-00ff-42b4-bd8a-990c1535c775"
+  AZURE_CLIENT_ID: "34cd0617-ee70-4c4f-9b40-53df8e68d454"
   AZURE_TENANT_ID: "a2e466aa-4f86-4545-b5b8-97da7c8febf3"
   AZURE_SUBSCRIPTION_ID: "697b55db-e8fc-4901-9c36-70c71778f7d5"
   RESOURCE_GROUP: "melvin-petit-dev"
