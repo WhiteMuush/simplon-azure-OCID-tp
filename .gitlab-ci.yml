@@ -161,6 +161,8 @@ deploy-job:
 # -----------------------------------------------------------------------------
 infra:setup:
   stage: infra
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
   when: manual
   allow_failure: true
   image: mcr.microsoft.com/azure-cli:latest
@@ -175,6 +177,8 @@ infra:setup:
 
 infra:teardown:
   stage: infra
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
   when: manual
   allow_failure: true
   image: mcr.microsoft.com/azure-cli:latest
